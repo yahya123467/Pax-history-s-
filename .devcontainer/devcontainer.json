@@ -1,0 +1,13 @@
+{
+  "name": "Pax History",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
+  "postCreateCommand": "npm install && npm run build",
+  "forwardPorts": [3001],
+  "portsAttributes": {
+    "3001": { "label": "Pax History", "onAutoForward": "openBrowser" }
+  },
+  "secrets": {
+    "OPENROUTER_API_KEY": { "description": "Your OpenRouter API key (optional; without it the offline engine is used)" },
+    "OPENROUTER_MODEL": { "description": "OpenRouter model slug, e.g. openai/gpt-4o-mini" }
+  }
+}
