@@ -88,7 +88,7 @@ export function MainMenu({ onStart }: { onStart: (g: GameDTO) => void }) {
             <div className="scenarios">
               {scenarios.map((s) => (
                 <button key={s.id} className={`scenario ${s.id === scenarioId ? 'active' : ''}`} onClick={() => pickScenario(s)}>
-                  <strong>{s.name}</strong>
+                  <strong>{s.name}{s.military && <span className="tag mil">⚔ Battle-focused: research · designers · divisions</span>}</strong>
                   <span className="small muted">{s.description}</span>
                 </button>
               ))}

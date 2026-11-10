@@ -1,5 +1,8 @@
 /** Typed wrappers around the server API. The browser never sees the AI key — it only calls /api. */
-import type { GameDTO, SaveSummary, ScenarioSummary } from '../../../shared/types';
+import type { GameDTO, MilitaryCommand, SaveSummary, ScenarioSummary } from '../../../shared/types';
+
+/** Static geography for orders: land neighbours, sea links, terrain, area (km²). */
+export type GeoInfo = Record<string, { n: string[]; sea: string[]; terrain: string; area: number }>;
 
 export interface GameListItem {
   id: string;
@@ -34,4 +37,6 @@ export const api = {
   saves: () => req<SaveSummary[]>('GET', '/saves'),
   loadSave: (id: number) => req<GameDTO>('POST', `/saves/${id}/load`),
   deleteSave: (id: number) => req<{ ok: true }>('DELETE', `/saves/${id}`),
+  military: (id: string, cmd: MilitaryCommand) => req<GameDTO & { message: string }>('POST', `/games/${id}/military`, cmd),
+  geo: () => req<GeoInfo>('GET', '/geo'),
 };

@@ -24,7 +24,7 @@ export function DiplomacyPanel({ state, nationId, onSelectNation, busy, disabled
   const thread = nationId ? state.chats[nationId] : undefined;
   const pending = thread ? thread.messages.length - thread.concludedUpTo : 0;
 
-  useEffect(() => end.current?.scrollIntoView({ block: 'end' }), [thread?.messages.length, busy]);
+  useEffect(() => { end.current?.scrollIntoView({ block: 'end' }); }, [thread?.messages.length, busy]);
 
   async function send() {
     if (!nationId || !text.trim()) return;

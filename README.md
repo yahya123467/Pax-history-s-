@@ -2,13 +2,18 @@
 
 A browser-based, AI-driven alternate-history grand strategy game. Pick a nation and a start date, write your orders in plain language ("remilitarise the Rhineland", "propose an alliance with Japan"), and an LLM game master decides how the world reacts. The map redraws to match.
 
+Two scenarios ship with it:
+
+- **World, 2026** (default): the present day, built around war. It has a research tree, a **division designer**, **tank and jet designers**, production, and land battles with air support on the map. The fighting is simulated by code, and the AI narrator only reports it. See [Military layer](#military-layer-world-2026).
+- **Europe, 1936**: the original diplomacy-first sandbox.
+
 - **Map:** Natural Earth borders, coloured by owner, rendered with MapLibre GL. Click a region to see its owner.
 - **Turns:** each **End Turn** resolves your orders, generates 1–3 moves by AI nations, and advances one month.
 - **Diplomacy:** chat with any nation's leader in character. Concluded talks are summarised into the event log.
 - **Rules engine:** the AI proposes changes; code validates each one before applying it (unknown provinces and nonexistent nations are rejected and shown to you).
 - **Memory:** once the log passes 30 events, older events are folded into a "history so far" paragraph.
 - **Save/load:** SQLite. Every turn is autosaved, and you can make named saves.
-- **Works offline:** with no API key, a mock engine is used, so you can try the whole loop for free.
+- **Works offline:** with no API key, a mock engine is used, so you can try the whole loop for free. The military layer needs no AI at all.
 
 ![Pax History — Germany, April 1936](docs/screenshot.png)
 
@@ -52,6 +57,7 @@ npm run typecheck    # server + client
 npm run build        # production build of the client
 npm start            # serve API + built client on :3001
 npm run geo          # rebuild the province layer from Natural Earth (outputs are committed)
+npm run province-geo -w server   # rebuild areas / border distances / sea links for the military layer
 npm run prompts      # regenerate docs/PROMPTS.md from the prompt source
 ```
 
@@ -63,16 +69,152 @@ npm run prompts      # regenerate docs/PROMPTS.md from the prompt source
 4. **Diplomacy** (right, bottom): pick a nation, or click it on the map and choose *Open talks*. Make concrete offers. Leaders act in their own interest. Press **Conclude talks** to record agreements in the log. Open talks are concluded automatically at End Turn.
 5. **Save game** in the top bar. **Menu → Load game** lists named saves and autosaved games.
 
+## Military layer (World, 2026)
+
+![Division designer](docs/military-divisions.png)
+
+Open it with **⚔ Military** in the top bar. All of it is deterministic code in `shared/military` and `server/src/military`. The AI narrator only describes battles; it cannot change their results or hand over land between nations at war.
+
+### Start of the game
+
+There are 30 playable nations with present-day leaders, alignments and abstracted force sizes:
+
+- A *division* is roughly 10–20k troops.
+- *Factories* measure defense-industrial capacity.
+- Jets are counted in combat aircraft.
+
+The **Russia–Ukraine war is already running**: Russia holds about 19% of Ukraine, and most of its army is on the front. Nations start with research matching their tech tier. For example, the US, China and a few others already have 5th-generation stealth airframes.
+
+### Research
+
+There are 6 trees with about 60 technologies, dated 2020–2034: Infantry, Armor, Artillery & AD, Air, Doctrine and Industry.
+
+- Each nation has 2–6 research slots.
+- Research speed scales with the economy.
+- Researching a technology **ahead of its year** costs +50% per year early.
+- Techs unlock battalions, tank and jet modules, and airframes, or give global bonuses (for example, *Network-Centric Warfare*: +10% attack).
+
+### Tank designer
+
+![Tank designer](docs/military-tanks.png)
+
+Pick a **chassis**: wheeled, light, main battle tank, or next-gen heavy MBT. Then fit:
+
+- a main gun (30 mm autocannon up to a 140 mm electrothermal gun; bigger guns need bigger chassis)
+- a turret (manned, autoloader, or unmanned with crew capsule)
+- an engine (diesel, gas turbine, hybrid-electric)
+- armor (rolled steel, composite, heavy ERA, nanoceramic)
+- fire control
+- up to 4 special modules: soft- and hard-kill APS, a remote weapon station, gun-launched ATGMs, anti-drone cage armor, a tethered recon drone, and more
+
+Stats update live, compared against the design you started from:
+
+- soft attack, hard attack
+- piercing, armor
+- defense, breakthrough
+- speed, reliability
+- cost
+
+A battalion fields 40 tanks of the chosen design. Changing a design that's already in use saves a new variant instead.
+
+### Jet designer
+
+Pick an **airframe**: light fighter, multirole, heavy strike, 4.5-gen, 5th-gen stealth, 6th-gen adaptive, or a combat drone. Then fit:
+
+- an engine, up to adaptive-cycle
+- a radar: pulse-Doppler, AESA or GaN AESA
+- up to 6 weapon stations: short-range, BVR and ramjet AAMs; rocket pods; guided bombs; stand-off and hypersonic missiles
+- specials: RAM coating, an EW suite, conformal tanks, a targeting pod, helmet cueing
+
+Stealth airframes carry weapons internally. The *External Hardpoints* special adds 2 weapon stations but costs most of the stealth.
+
+### Division designer
+
+Build templates on a **5×5 combat grid** plus **5 support companies**:
+
+| Combat battalions | Support companies |
+|---|---|
+| Infantry, motorized, mechanized, special forces, air assault, marines | Recon drones, engineers, signals & EW, logistics |
+| Armored (uses any of your tank designs) | Counter-battery, field hospital |
+| Self-propelled artillery, rocket artillery, anti-tank missiles, air defense | Loitering munitions, SHORAD |
+
+The stats panel shows:
+
+- width, manpower, HP, organisation
+- soft and hard attack, defense, breakthrough
+- armor, piercing, hardness
+- air defense, speed
+- equipment cost, and the equipment list against your stockpile
+
+Editing a template updates every division that uses it.
+
+### Production and recruiting
+
+- Factories are assigned to production lines: infantry kit, IFVs, guns, rocket launchers, ATGMs, air defense, drones, helicopters, or any tank or jet design.
+- Output depends on research, economy and stability.
+- New divisions need a full equipment set and manpower, and train for 2 turns.
+- Damaged divisions reinforce from the stockpile (up to 25% strength per month).
+
+### Orders and battles
+
+![Battle report](docs/military-battle.png)
+
+![Naval invasion of Taiwan](docs/military-map.png)
+
+**Giving orders.** Click a province, tick divisions, and choose a target from the list, or press **Pick on map**.
+
+- Moving into enemy land attacks it.
+- ⛴ marks a naval landing. Landings are only possible across a real sea crossing of ≤ 600 km between coasts, computed from the map.
+- Troops can enter foreign land only at war, or with military access (relation ≥ 50).
+- Declaring war pulls in the target's close friends (relation ≥ 70).
+
+**Combat.** At End Turn, every province where warring armies meet has a battle of 12 rounds:
+
+- **Frontage** comes from terrain: 60 for mountains and jungle, 90 for plains. It grows on long fronts in big provinces and with attacks from several directions. Divisions deploy until the width is full, and reserves rotate in as front divisions lose organisation.
+- **Damage:** attacks are `soft × (1 − hardness) + hard × hardness`. They are blocked by the target's defense (when defending) or breakthrough (when attacking). Blocked hits do little damage.
+- **Armor vs piercing:** armor above the enemy's piercing halves damage taken and adds shock. Piercing below the enemy's armor costs attack. Forest, urban and mountain terrain blunt armor.
+- **Modifiers:** terrain penalties, entrenchment, initiative (recon), enemy EW, counter-battery, and amphibious penalties. Landings take −50% in the first battle and −20% while supplied over the beaches.
+- **Air:** air-superiority wings in range fight for the sky. Ground-support wings add damage scaled by sky control and blunted by enemy air defense. Planes are lost to fighters and AA.
+
+**Outcome.** The result moves the province's **occupation progress**:
+
+- Bigger provinces take longer: Ukraine needs many won battles, Russia far more.
+- A big army in reserve slows the enemy down.
+- At 100% the province changes hands. Defenders that can't retreat to friendly ground are **encircled and destroyed**.
+
+**Aftermath.** Casualties wear down stability (war exhaustion). Battle reports show:
+
+- each division's strength and organisation before and after, and its fate
+- casualties, equipment and aircraft lost
+- an organisation-per-round chart
+
+### AI nations
+
+Every other nation runs on code-based AI:
+
+- It researches and redesigns its tanks and jets as tech unlocks better parts.
+- It reallocates its factories and recruits when threatened.
+- It reinforces battles it is losing and attacks where it has the odds.
+- It launches naval invasions when there is no land front.
+- It accepts peace when losing.
+
+The LLM narrator may also start or end wars between AI nations (`declare_war` / `make_peace`). It can never start or end a war for the player.
+
 ## Project structure
 
 ```
 .
 ├── shared/
-│   └── types.ts                 # World-state schema + AI contract + API DTOs (types only)
+│   ├── types.ts                 # World-state schema + AI contract + API DTOs (types only)
+│   └── military/
+│       ├── catalog.ts           # techs, battalions, equipment, tank/jet modules, terrain, standard designs
+│       └── stats.ts             # design/division stat calculators (used by server AND designers)
 ├── server/                      # Node + Express + TypeScript (run with tsx)
 │   ├── data/provinces.json      # generated: province ids, names, centroids, neighbours
+│   ├── data/province-geo.json   # generated: areas, border distances, coast-to-coast sea links
 │   ├── scripts/
 │   │   ├── build-geo.ts         # Natural Earth -> provinces.geojson + provinces.json
+│   │   ├── build-province-geo.ts # GeoJSON -> province-geo.json (npm run province-geo -w server)
 │   │   └── dump-prompts.ts      # writes docs/PROMPTS.md
 │   └── src/
 │       ├── index.ts             # Express app (also serves client/dist in production)
@@ -83,8 +225,17 @@ npm run prompts      # regenerate docs/PROMPTS.md from the prompt source
 │       │   ├── world.ts         # pure state helpers (relations, dates, lookups)
 │       │   ├── summary.ts       # compact world summary for prompts
 │       │   └── provinces.ts     # loads province metadata
+│       ├── military/
+│       │   ├── init.ts          # starting forces, research, air wings, wars
+│       │   ├── combat.ts        # battle resolution (land + air)
+│       │   ├── turn.ts          # monthly phase: research, production, AI, movement, battles, recovery
+│       │   ├── ai.ts            # AI research, auto-designs, production, recruiting, front moves, peace
+│       │   ├── commands.ts      # validated player commands (designers, orders, war/peace)
+│       │   ├── world.ts         # geography, sides, access rules, stat cache
+│       │   └── summary.ts       # military situation for the narrator prompt
 │       ├── scenarios/
-│       │   ├── europe1936.ts    # the preset scenario
+│       │   ├── world2026.ts     # present-day scenario (military layer)
+│       │   ├── europe1936.ts    # the 1936 scenario
 │       │   └── index.ts         # scenario registry + initial-state builder
 │       ├── ai/
 │       │   ├── client.ts        # OpenRouter client, retry/backoff, JSON repair
@@ -109,7 +260,8 @@ npm run prompts      # regenerate docs/PROMPTS.md from the prompt source
 │           ├── EventLog.tsx      # left column
 │           ├── ActionPanel.tsx   # orders + turn report
 │           ├── DiplomacyPanel.tsx
-│           └── TopBar.tsx
+│           ├── TopBar.tsx
+│           └── military/         # Military screen: Army, Battles, Research, Division/Tank/Jet designers, Production
 └── docs/PROMPTS.md              # exact prompts, generated
 ```
 
@@ -197,7 +349,8 @@ The exact prompts are in **[docs/PROMPTS.md](docs/PROMPTS.md)**, rendered with r
 - **Multiplayer:** several human nations in one world, with simultaneous order submission and a turn resolved when all players are ready. Add WebSocket push for map and log updates. This needs accounts and moving to PostgreSQL.
 - **Community sharing:** publish scenarios and finished timelines, browse and fork others' games, rate them. Make game replays from the event log.
 - **Token/credit system:** meter AI usage per user (prompt and completion tokens from OpenRouter's `usage` field), with free daily turns and paid credit packs. Route cheap calls (memory, talks summary) to a cheaper model.
-- **Quality:** stream narratives token by token, add armies and war state as first-class data, give AI nations long-term plans that persist between turns, and add an "advisor" that suggests orders.
+- **Quality:** stream narratives token by token, give AI nations long-term plans that persist between turns, and add an "advisor" that suggests orders.
+- **Military:** navies and convoys, sub-national provinces for real front lines, supply lines, lend-lease between allies, and nuclear deterrence.
 
 ## License / data
 

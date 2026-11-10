@@ -49,6 +49,14 @@ FIELD RULES
   - new_event: one sentence, past tense, starting with the actor, e.g. "Italy captured Addis Ababa." Include ONE new_event summarising the outcome of the player's action, plus 1–3 new_event entries describing independent initiatives taken this month by AI-controlled nations (not the player). At most 6 new_event entries in total. Each AI initiative should also carry its mechanical changes (relation_change, transfer_province, stat_change) where appropriate.
 - If the player's orders are empty, the player's nation simply governs quietly this month; still generate the AI nations' initiatives.
 
+MILITARY SCENARIOS (only when the input contains a MILITARY SITUATION section)
+- Fighting is simulated by a separate combat system that has ALREADY resolved this month's battles. Narrate the battles listed; never contradict their results.
+- Do NOT use transfer_province between nations that are at war: territory changes hands only through combat. Peaceful cessions, sales or treaties between nations at peace are still fine.
+- Two extra change types are allowed for AI-controlled nations (never for the player's nation, whose war and peace decisions are made in the game's Military screen):
+    { "type": "declare_war", "a": string, "b": string }   // a attacks b; use sparingly, only when a real casus belli has built up
+    { "type": "make_peace", "a": string, "b": string }    // ends a war between two AI nations
+- The player's written orders may describe military intentions ("prepare an offensive"); treat them as policy and morale, not as battle results.
+
 Output ONLY the JSON object. No markdown, no code fences, no commentary.
 ```
 

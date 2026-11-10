@@ -1,11 +1,17 @@
-import type { WorldState } from '../../../shared/types';
+import type { MilitaryCommand, WorldState } from '../../../shared/types';
+import type { GeoInfo } from '../lib/api';
 import { relation, relationColor, relationLabel, signed } from '../lib/format';
+import { ProvinceMilitary } from './military/ProvinceMilitary';
 
 interface Props {
   state: WorldState;
   provinceId: string;
   onClose: () => void;
   onNegotiate: (nationId: string) => void;
+  geo?: GeoInfo | null;
+  busy?: boolean;
+  runMilitary?: (cmd: MilitaryCommand) => Promise<boolean>;
+  onPickTarget?: (divisions: string[]) => void;
 }
 
 function Bar({ label, value }: { label: string; value: number }) {
@@ -18,7 +24,7 @@ function Bar({ label, value }: { label: string; value: number }) {
   );
 }
 
-export function ProvincePanel({ state, provinceId, onClose, onNegotiate }: Props) {
+export function ProvincePanel({ state, provinceId, onClose, onNegotiate, geo = null, busy = false, runMilitary, onPickTarget }: Props) {
   const prov = state.provinces[provinceId];
   if (!prov) return null;
   const n = state.nations[prov.owner];
@@ -56,6 +62,9 @@ export function ProvincePanel({ state, provinceId, onClose, onNegotiate }: Props
       )}
       {!isPlayer && (
         <button className="btn" onClick={() => onNegotiate(n.id)}>Open talks with {n.name}</button>
+      )}
+      {state.military && runMilitary && onPickTarget && (
+        <ProvinceMilitary state={state} provinceId={provinceId} geo={geo} busy={busy} run={runMilitary} onPickTarget={onPickTarget} />
       )}
     </div>
   );

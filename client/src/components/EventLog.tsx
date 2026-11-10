@@ -4,7 +4,7 @@ import type { WorldState } from '../../../shared/types';
 export function EventLog({ state }: { state: WorldState }) {
   const end = useRef<HTMLDivElement>(null);
   const [historyOpen, setHistoryOpen] = useState(true);
-  useEffect(() => end.current?.scrollIntoView({ block: 'end' }), [state.events.length]);
+  useEffect(() => { end.current?.scrollIntoView({ block: 'end' }); }, [state.events.length]);
 
   return (
     <aside className="panel event-log">

@@ -20,6 +20,10 @@ interface Props {
   state: WorldState;
   selected: string | null;
   onSelect: (provinceId: string | null) => void;
+  /** Choosing a target province for division orders. */
+  picking?: boolean;
+  /** Fly to this province (n changes on every request). */
+  focus?: { id: string; n: number } | null;
 }
 
 maplibregl.setWorkerUrl(workerUrl);
@@ -52,10 +56,11 @@ function colorExpression(state: WorldState): ExpressionSpecification {
   return ['match', ['get', 'id'], ...pairs, '#2a2f36'] as unknown as ExpressionSpecification;
 }
 
-export function MapView({ state, selected, onSelect }: Props) {
+export function MapView({ state, selected, onSelect, picking = false, focus = null }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markers = useRef<maplibregl.Marker[]>([]);
+  const unitMarkers = useRef<maplibregl.Marker[]>([]);
   const [geo, setGeo] = useState<Geo | null>(null);
   const [ready, setReady] = useState(false);
   const [hover, setHover] = useState<{ x: number; y: number; id: string } | null>(null);
@@ -110,6 +115,32 @@ export function MapView({ state, selected, onSelect }: Props) {
         paint: { 'line-color': '#f2c14e', 'line-width': 1.2, 'line-opacity': 0.8 },
       });
       map.addLayer({
+        id: 'war-line',
+        type: 'line',
+        source: 'provinces',
+        filter: ['in', ['get', 'id'], ['literal', []]],
+        paint: { 'line-color': '#e06c6c', 'line-width': 1.6, 'line-dasharray': [2, 1.5] },
+      });
+      map.addSource('orders', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      map.addLayer({
+        id: 'orders-line',
+        type: 'line',
+        source: 'orders',
+        paint: {
+          'line-color': ['match', ['get', 'kind'], 'attack', '#ff5a4f', 'naval', '#6ec6ff', '#f2c14e'],
+          'line-width': 3,
+          'line-dasharray': [1.5, 1],
+          'line-opacity': 0.95,
+        },
+      });
+      map.addLayer({
+        id: 'orders-head',
+        type: 'circle',
+        source: 'orders',
+        filter: ['==', ['get', 'end'], true],
+        paint: { 'circle-radius': 5, 'circle-color': ['match', ['get', 'kind'], 'attack', '#ff5a4f', 'naval', '#6ec6ff', '#f2c14e'], 'circle-stroke-color': '#0d1b2a', 'circle-stroke-width': 1.5 },
+      });
+      map.addLayer({
         id: 'selected-line',
         type: 'line',
         source: 'provinces',
@@ -125,20 +156,23 @@ export function MapView({ state, selected, onSelect }: Props) {
         if (hoverId && hoverId !== id) map.setFeatureState({ source: 'provinces', id: hoverId }, { hover: false });
         hoverId = id;
         map.setFeatureState({ source: 'provinces', id }, { hover: true });
-        map.getCanvas().style.cursor = 'pointer';
+        if (!container.current?.classList.contains('picking')) map.getCanvas().style.cursor = 'pointer';
         setHover({ x: e.point.x, y: e.point.y, id });
       });
       map.on('mouseleave', 'province-fill', () => {
         if (hoverId) map.setFeatureState({ source: 'provinces', id: hoverId }, { hover: false });
         hoverId = null;
-        map.getCanvas().style.cursor = '';
+        if (!container.current?.classList.contains('picking')) map.getCanvas().style.cursor = '';
         setHover(null);
       });
       map.on('click', (e) => {
         const f = map.queryRenderedFeatures(e.point, { layers: ['province-fill'] })[0];
         onSelectRef.current(f ? String(f.properties.id) : null);
       });
-      const zoomClass = () => container.current?.classList.toggle('zoomed', map.getZoom() >= 4.3);
+      const zoomClass = () => {
+        container.current?.classList.toggle('zoomed', map.getZoom() >= 4.3);
+        container.current?.classList.toggle('far', map.getZoom() < 2.6);
+      };
       map.on('zoom', zoomClass);
       zoomClass();
 
@@ -182,6 +216,85 @@ export function MapView({ state, selected, onSelect }: Props) {
     map.setFilter('selected-line', ['==', ['get', 'id'], selected ?? '']);
   }, [selected, ready]);
 
+  // Military overlay: unit counters, battle markers, enemy borders, order arrows.
+  useEffect(() => {
+    const map = mapRef.current;
+    const mil = state.military;
+    if (!map || !ready || !geo || !mil) return;
+    const me = state.playerNation;
+    const enemies = new Set(mil.wars.flatMap((w) => (w.a === me ? [w.b] : w.b === me ? [w.a] : [])));
+    const warring = new Set(mil.wars.flatMap((w) => [w.a, w.b]));
+    map.setFilter('war-line', ['in', ['get', 'id'], ['literal', Object.values(state.provinces).filter((p) => enemies.has(p.owner)).map((p) => p.id)]]);
+
+    unitMarkers.current.forEach((m) => m.remove());
+    unitMarkers.current = [];
+    const points = labelPoints(geo);
+    const battleAt = new Set(mil.battles.map((b) => b.province));
+    const byProv = new Map<string, Map<string, number>>();
+    for (const d of mil.divisions) {
+      const g = byProv.get(d.province) ?? new Map<string, number>();
+      g.set(d.owner, (g.get(d.owner) ?? 0) + 1);
+      byProv.set(d.province, g);
+    }
+    for (const [prov, owners] of byProv) {
+      const pt = points.get(prov);
+      if (!pt) continue;
+      const el = document.createElement('div');
+      const relevant = [...owners.keys()].some((o) => o === me || enemies.has(o) || warring.has(o));
+      el.className = `unit-stack${relevant ? '' : ' quiet'}`;
+      for (const [owner, n] of [...owners].sort((a, b) => Number(b[0] === me) - Number(a[0] === me) || b[1] - a[1])) {
+        const c = document.createElement('span');
+        c.className = `unit${owner === me ? ' mine' : enemies.has(owner) ? ' enemy' : ''}`;
+        c.style.setProperty('--nation', state.nations[owner]?.color ?? '#888');
+        c.title = `${state.nations[owner]?.name}: ${n} division${n > 1 ? 's' : ''}`;
+        c.innerHTML = `<i></i>${n}`;
+        el.appendChild(c);
+      }
+      if (battleAt.has(prov)) {
+        const b = document.createElement('span');
+        b.className = 'battle-icon';
+        b.textContent = '⚔';
+        el.appendChild(b);
+      }
+      const occ = mil.occupation[prov];
+      if (occ && occ.progress > 0) {
+        const o = document.createElement('span');
+        o.className = 'occ-tag';
+        o.style.setProperty('--nation', state.nations[occ.by]?.color ?? '#888');
+        o.textContent = `${Math.round(occ.progress)}%`;
+        o.title = `Occupied by ${state.nations[occ.by]?.name}: ${Math.round(occ.progress)}%`;
+        el.appendChild(o);
+      }
+      unitMarkers.current.push(new maplibregl.Marker({ element: el, offset: [0, 18] }).setLngLat(pt.at).addTo(map));
+    }
+
+    const features: GeoJSON.Feature[] = [];
+    for (const d of mil.divisions) {
+      if (d.owner !== me || !d.order) continue;
+      const a = points.get(d.province)?.at, b = points.get(d.order.to)?.at;
+      if (!a || !b) continue;
+      const key = `${d.province}>${d.order.to}`;
+      if (features.some((f) => f.id === key)) continue;
+      features.push({ type: 'Feature', id: key, properties: { kind: d.order.kind }, geometry: { type: 'LineString', coordinates: [a, b] } });
+      features.push({ type: 'Feature', id: `${key}:end`, properties: { kind: d.order.kind, end: true }, geometry: { type: 'Point', coordinates: b } });
+    }
+    (map.getSource('orders') as maplibregl.GeoJSONSource).setData({ type: 'FeatureCollection', features });
+  }, [state.military, state.provinces, state.playerNation, ready, geo]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    map.getCanvas().style.cursor = picking ? 'crosshair' : '';
+    container.current?.classList.toggle('picking', picking);
+  }, [picking, ready]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || !geo || !focus) return;
+    const pt = labelPoints(geo).get(focus.id);
+    if (pt) map.flyTo({ center: pt.at, zoom: Math.max(map.getZoom(), 4), speed: 1.6 });
+  }, [focus, ready, geo]);
+
   const hoverProv = hover ? state.provinces[hover.id] : null;
   return (
     <div className="map-wrap">
@@ -193,6 +306,9 @@ export function MapView({ state, selected, onSelect }: Props) {
             <i className="swatch" style={{ background: state.nations[hoverProv.owner]?.color }} />
             {state.nations[hoverProv.owner]?.name}
           </span>
+          {state.military?.occupation[hoverProv.id] && (
+            <span className="small">Occupied {Math.round(state.military.occupation[hoverProv.id].progress)}% by {state.nations[state.military.occupation[hoverProv.id].by]?.name}</span>
+          )}
         </div>
       )}
       {!ready && <div className="map-loading">Loading map…</div>}

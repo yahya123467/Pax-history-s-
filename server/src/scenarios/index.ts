@@ -1,10 +1,14 @@
 import type { Nation, Province, ScenarioSummary, WorldState } from '../../../shared/types';
 import { PROVINCES } from '../state/provinces';
 import { addEvent, setRelation } from '../state/world';
+import { TECHS } from '../../../shared/military/catalog';
+import { buildMilitary } from '../military/init';
 import { europe1936 } from './europe1936';
 import type { ScenarioDefinition } from './types';
+import { world2026 } from './world2026';
 
-export const SCENARIOS: Record<string, ScenarioDefinition> = { [europe1936.id]: europe1936 };
+// The present-day world (with the military layer) is listed first.
+export const SCENARIOS: Record<string, ScenarioDefinition> = { [world2026.id]: world2026, [europe1936.id]: europe1936 };
 
 export function listScenarios(): ScenarioSummary[] {
   return Object.values(SCENARIOS).map((s) => ({
@@ -13,6 +17,7 @@ export function listScenarios(): ScenarioSummary[] {
     description: s.description,
     startDate: s.startDate,
     startRange: s.startRange,
+    military: !!s.military,
     playableNations: s.nations
       .filter((n) => n.playable)
       .map((n) => ({ id: n.id, name: n.name, leader: n.leader, color: n.color, blurb: n.blurb })),
@@ -93,6 +98,7 @@ export function buildInitialState(scenarioId: string, playerNation: string, star
   };
   for (const [a, b, v] of sc.relations) setRelation(state, a, b, v);
   for (const text of sc.openingEvents) addEvent(state, 'world', text);
+  if (sc.military) state.military = buildMilitary(state, sc.military, new Map(TECHS.map((t) => [t.id, t.requires])));
   addEvent(state, 'system', `You lead ${nations[playerNation].name}. The year is ${date.slice(0, 4)}.`);
   return state;
 }

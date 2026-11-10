@@ -6,6 +6,38 @@ import { config } from '../config';
 import * as db from '../db/database';
 import { listScenarios, ScenarioError } from '../scenarios';
 import * as game from '../services/gameService';
+import { geoForClient } from '../military/world';
+import type { MilitaryCommand } from '../../../shared/types';
+
+const id = z.string().max(64);
+const name = z.string().max(60);
+const modules = z.record(z.string().max(20), z.string().max(40).nullable());
+const order = z.object({ kind: z.enum(['move', 'attack', 'naval']), to: id });
+const mission = z.enum(['superiority', 'ground_support']);
+const militaryCommandSchema = z.discriminatedUnion('op', [
+  z.object({ op: z.literal('research'), slot: z.number().int(), tech: id.nullable() }),
+  z.object({ op: z.literal('save_tank'), design: z.object({ id: id.default(''), name, chassis: id, modules }) }),
+  z.object({ op: z.literal('save_jet'), design: z.object({ id: id.default(''), name, airframe: id, modules }) }),
+  z.object({ op: z.literal('obsolete_design'), kind: z.enum(['tank', 'jet']), id, obsolete: z.boolean() }),
+  z.object({
+    op: z.literal('save_template'),
+    template: z.object({
+      id: id.default(''),
+      name,
+      combat: z.array(z.object({ type: id, design: id.optional() }).nullable()).max(25),
+      support: z.array(id.nullable()).max(5),
+    }),
+  }),
+  z.object({ op: z.literal('delete_template'), id }),
+  z.object({ op: z.literal('set_production'), lines: z.array(z.object({ id: id.default(''), item: z.string().max(64), factories: z.number().min(0) })).max(40) }),
+  z.object({ op: z.literal('recruit'), template: id, province: id, count: z.number().int().min(1).max(10) }),
+  z.object({ op: z.literal('order'), divisions: z.array(id).min(1).max(100), order: order.nullable() }),
+  z.object({ op: z.literal('disband'), division: id }),
+  z.object({ op: z.literal('create_wing'), design: id, count: z.number().int().min(1), province: id, mission }),
+  z.object({ op: z.literal('wing'), id, province: id.optional(), mission: mission.optional(), count: z.number().int().min(0).optional() }),
+  z.object({ op: z.literal('declare_war'), target: id }),
+  z.object({ op: z.literal('propose_peace'), target: id }),
+]);
 
 export const api = Router();
 
@@ -25,6 +57,8 @@ const body = <T extends z.ZodTypeAny>(schema: T, req: Request): z.infer<T> => {
 api.get('/health', h(() => ({ ok: true, aiMode: config.ai.mock ? 'mock' : 'live', model: config.ai.mock ? null : config.ai.model })));
 
 api.get('/scenarios', h(() => listScenarios()));
+
+api.get('/geo', h(() => geoForClient()));
 
 api.get('/games', h(() => db.listGames()));
 
@@ -52,6 +86,8 @@ api.post(
 );
 
 api.post('/games/:id/chat/:nation/conclude', h((req) => game.concludeChat(req.params.id, req.params.nation)));
+
+api.post('/games/:id/military', h((req) => game.militaryCommand(req.params.id, body(militaryCommandSchema, req) as MilitaryCommand)));
 
 api.post('/games/:id/saves', h((req) => game.saveGame(req.params.id, body(z.object({ name: z.string().max(80).default('') }), req).name)));
 

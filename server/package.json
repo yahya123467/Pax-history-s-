@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test src/**/*.test.ts",
     "geo": "tsx scripts/build-geo.ts",
-    "prompts": "tsx scripts/dump-prompts.ts"
+    "prompts": "tsx scripts/dump-prompts.ts",
+    "province-geo": "tsx scripts/build-province-geo.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",

@@ -12,6 +12,8 @@
 import { z } from 'zod';
 import type { EventKind, WorldState } from '../../../shared/types';
 import { addEvent, clamp, getRelation, refreshAlive, resolveNation, resolveProvince, setRelation } from '../state/world';
+import { declareWar, makePeace } from '../military/commands';
+import { atWar } from '../military/world';
 
 export const RULES = {
   maxTransfersPerTurn: 6,
@@ -67,6 +69,7 @@ export function applyChanges(state: WorldState, changes: Loose[], eventKind: Eve
         if (!to) { reject(c, `nonexistent nation "${String(c.to)}"`); break; }
         if (prov.owner === to.id) { reject(c, `${to.name} already owns ${prov.name}`); break; }
         if (transfers >= RULES.maxTransfersPerTurn) { reject(c, `more than ${RULES.maxTransfersPerTurn} transfers in one turn`); break; }
+        if (state.military && atWar(state, prov.owner, to.id)) { reject(c, 'conquest between nations at war is decided on the battlefield'); break; }
         const from = state.nations[prov.owner];
         prov.owner = to.id;
         transfers++;
@@ -107,6 +110,30 @@ export function applyChanges(state: WorldState, changes: Loose[], eventKind: Eve
         applied.push(`Event: ${c.text.trim().slice(0, 80)}`);
         break;
       }
+      case 'declare_war':
+      case 'make_peace': {
+        if (!state.military) { reject(c, 'this scenario has no military layer'); break; }
+        const a = resolveNation(state, c.a);
+        const b = resolveNation(state, c.b);
+        if (!a || !b) { reject(c, `nonexistent nation "${String(!a ? c.a : c.b)}"`); break; }
+        if (a.id === b.id) { reject(c, 'a nation cannot fight itself'); break; }
+        if (!a.alive || !b.alive) { reject(c, 'both nations must exist'); break; }
+        if (a.id === state.playerNation || b.id === state.playerNation) {
+          reject(c, 'only the player decides war and peace for their nation (use the Military screen)');
+          break;
+        }
+        const war = atWar(state, a.id, b.id);
+        if (c.type === 'declare_war') {
+          if (war) { reject(c, `${a.name} and ${b.name} are already at war`); break; }
+          const joined = declareWar(state, a.id, b.id);
+          applied.push(`War: ${a.name} declared war on ${b.name}${joined.length ? ` (${joined.join(', ')} joined)` : ''}`);
+        } else {
+          if (!war) { reject(c, `${a.name} and ${b.name} are not at war`); break; }
+          makePeace(state, a.id, b.id);
+          applied.push(`Peace: ${a.name} and ${b.name}`);
+        }
+        break;
+      }
       default:
         reject(c, `unknown change type "${c.type}"`);
     }
@@ -124,6 +151,8 @@ function describe(c: Loose): string {
     case 'relation_change': return `relation ${String(c.a)}/${String(c.b)} ${String(c.delta)}`;
     case 'stat_change': return `${String(c.nation)} ${String(c.stat)} ${String(c.delta)}`;
     case 'new_event': return `event "${String(c.text).slice(0, 40)}"`;
+    case 'declare_war': return `war ${String(c.a)} → ${String(c.b)}`;
+    case 'make_peace': return `peace ${String(c.a)}/${String(c.b)}`;
     default: return `change "${c.type}"`;
   }
 }

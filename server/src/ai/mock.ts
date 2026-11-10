@@ -39,7 +39,13 @@ export function mockResolveTurn(state: WorldState, action: string): ParsedResolu
   const targets = mentionedNations(state, action);
   const target = targets[0];
 
-  if (target && HOSTILE.test(action)) {
+  if (target && HOSTILE.test(action) && state.military) {
+    // Military scenarios: fighting happens on the Military screen; the narrator only reports.
+    narrative = `Your government's belligerent rhetoric toward ${target.name} dominated the month. Fighting itself is decided on the battlefield — use the Military screen to declare war and give your divisions orders.`;
+    changes.push({ type: 'relation_change', a: player.id, b: target.id, delta: -15 });
+    changes.push({ type: 'new_event', text: `${player.name} escalated tensions with ${target.name}.` });
+    reactions.push({ nation: target.id, reaction: `${target.leader} warned that any attack will be met with force.` });
+  } else if (target && HOSTILE.test(action)) {
     const playerProvs = new Set(provincesOf(state, player.id).map((p) => p.id));
     const theirs = provincesOf(state, target.id);
     const bordering = theirs.filter((p) => PROVINCE_META.get(p.id)?.neighbours.some((n) => playerProvs.has(n)));
@@ -103,6 +109,12 @@ export function mockResolveTurn(state: WorldState, action: string): ParsedResolu
       changes.push({ type: 'stat_change', nation: a.id, stat: 'stability', delta: -4 });
     }
     if (reactions.length < 3) reactions.push({ nation: a.id, reaction: `${a.leader} is watching ${player.name} closely.` });
+  }
+  const battles = state.military?.battles ?? [];
+  if (battles.length) {
+    const mine = battles.filter((b) => b.attacker.nations.includes(player.id) || b.defender.nations.includes(player.id));
+    const shown = (mine.length ? mine : battles).slice(0, 3);
+    narrative += `\n\nFrom the front: ${shown.map((b) => `at ${b.provinceName} ${b.captured ? 'the province fell' : b.winner === 'stalemate' ? 'neither side broke' : `the ${b.winner} prevailed`}`).join('; ')}.`;
   }
   return { narrative: `[Offline mock engine — set OPENROUTER_API_KEY for the real AI]\n\n${narrative}`, nation_reactions: reactions, state_changes: changes };
 }

@@ -3,7 +3,7 @@
  * Routes stay thin; everything stateful happens here.
  */
 import { randomUUID } from 'node:crypto';
-import type { GameDTO, WorldState } from '../../../shared/types';
+import type { GameDTO, MilitaryCommand, WorldState } from '../../../shared/types';
 import { config } from '../config';
 import * as db from '../db/database';
 import { chatReply, summarizeTalks } from '../ai/diplomacy';
@@ -11,6 +11,9 @@ import { resolveTurn, summarizeHistory } from '../ai/engine';
 import { buildInitialState, SCENARIOS } from '../scenarios';
 import { addEvent, clamp, formatDate, nextMonth } from '../state/world';
 import { applyChanges } from '../validation/changes';
+import { applyCommand, CommandError } from '../military/commands';
+import { processMilitaryTurn } from '../military/turn';
+import { cleanupPositions } from '../military/world';
 
 export class HttpError extends Error {
   constructor(public status: number, message: string) {
@@ -67,13 +70,17 @@ export async function endTurn(gameId: string, action: string): Promise<GameDTO> 
     for (const thread of Object.values(state.chats))
       if (thread.messages.length > thread.concludedUpTo) await concludeThread(state, thread.nation);
 
-    // 2. Ask the engine.
+    // 2. Military phase: research, production, AI moves, movement and battles (code, not AI).
     const orders = action.trim().slice(0, 2000);
     if (orders) addEvent(state, 'player', `${state.nations[state.playerNation].name} orders: ${orders}`);
+    if (state.military) processMilitaryTurn(state);
+
+    // 3. Ask the engine (it sees this month's battles).
     const resolution = await resolveTurn(state, orders);
 
-    // 3. Validate + apply every change against the rules.
+    // 4. Validate + apply every change against the rules.
     const { applied, rejected } = applyChanges(state, resolution.state_changes, 'world');
+    if (state.military) for (const note of cleanupPositions(state)) addEvent(state, 'system', note);
     if (rejected.length) console.info(`[turn] rejected ${rejected.length} change(s):\n  ${rejected.join('\n  ')}`);
 
     state.lastReport = {
@@ -88,12 +95,12 @@ export async function endTurn(gameId: string, action: string): Promise<GameDTO> 
       rejected,
     };
 
-    // 4. Advance time.
+    // 5. Advance time.
     state.turn += 1;
     state.date = nextMonth(state.date);
     addEvent(state, 'system', `— ${formatDate(state.date)} —`);
 
-    // 5. Memory: keep prompts small.
+    // 6. Memory: keep prompts small.
     await compactMemory(state);
 
     db.updateGame(gameId, state);
@@ -179,4 +186,23 @@ export function loadSave(saveId: number): GameDTO {
   const id = randomUUID();
   db.insertGame(id, save.name, save.state);
   return dto(id, save.name, save.state);
+}
+
+// ---- military ----
+
+/** Applies a player military command (instant, no AI call). */
+export function militaryCommand(gameId: string, cmd: MilitaryCommand): GameDTO & { message: string } {
+  if (busy.has(gameId)) throw new HttpError(409, 'This game is already processing a request. Please wait.');
+  const row = load(gameId);
+  const state = row.state;
+  if (!state.military) throw new HttpError(400, 'This scenario has no military layer');
+  let message: string;
+  try {
+    message = applyCommand(state, cmd);
+  } catch (e) {
+    if (e instanceof CommandError) throw new HttpError(400, e.message);
+    throw e;
+  }
+  db.updateGame(gameId, state);
+  return { ...dto(row.id, row.name, state), message };
 }
