@@ -1,0 +1,22 @@
+{
+  "name": "pax-history-film",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Procedurally rendered 60-second history film: 5,000 Years in 60 Seconds",
+  "type": "module",
+  "scripts": {
+    "data": "node scripts/build-data.mjs",
+    "audio": "python3 scripts/score.py",
+    "render": "node scripts/render.mjs",
+    "still": "node scripts/still.mjs"
+  },
+  "dependencies": {
+    "@fontsource/cinzel": "^5.0.0",
+    "@fontsource/cormorant-garamond": "^5.0.0",
+    "@fontsource/inter": "^5.0.0",
+    "d3-geo": "^3.1.0",
+    "three-globe": "^2.45.6",
+    "topojson-client": "^3.1.0",
+    "world-atlas": "^2.0.2"
+  }
+}
