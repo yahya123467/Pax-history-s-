@@ -147,7 +147,8 @@ void main() {
   float dEdge = abs(land - 0.5) / fw;
   float coastLine = 1.0 - smoothstep(0.35, 1.15, dEdge);
   float coastGlow = 1.0 - smoothstep(0.0, 4.5, dEdge);
-  col += vec3(0.42, 0.56, 0.86) * (coastLine * 0.34 + coastGlow * 0.07) * (1.0 - 0.6 * dayF) * mix(0.3, 1.0, limbFade);
+  float zoomK = uScale * rl / min(uRes.x, uRes.y);
+  col += vec3(0.42, 0.56, 0.86) * (coastLine * mix(0.15, 0.34, smoothstep(0.6, 1.5, zoomK)) + coastGlow * 0.07) * (1.0 - 0.6 * dayF) * mix(0.3, 1.0, limbFade);
 
   // Terminator: a warm band of first light.
   float band = exp(-pow((sunDot - 0.03) / 0.085, 2.0));
