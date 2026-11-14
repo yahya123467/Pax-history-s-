@@ -31,19 +31,37 @@ const first = Math.round(T0 * FPS);
 const last = Math.round(T1 * FPS);           // exclusive
 const total = last - first;
 
-const tmp = path.join(ROOT, 'out', `segments-${W}x${H}`);
-fs.rmSync(tmp, { recursive: true, force: true });
+// Work is split into short chunks, each encoded to its own segment. A chunk that
+// fails is retried, and finished segments are kept, so a render can be resumed
+// with --resume after an interruption.
+const CHUNK = +arg('chunk', 300);
+const tmp = path.join(ROOT, 'out', `segments-${W}x${H}-crf${CRF}`);
+if (!process.argv.includes('--resume')) fs.rmSync(tmp, { recursive: true, force: true });
 fs.mkdirSync(tmp, { recursive: true });
 
-// Split the frame range into contiguous chunks, one per worker.
 const chunks = [];
-for (let k = 0; k < WORKERS; k++) {
-  const a = first + Math.floor((total * k) / WORKERS);
-  const b = first + Math.floor((total * (k + 1)) / WORKERS);
-  if (b > a) chunks.push({ k, a, b, file: path.join(tmp, `seg${String(k).padStart(2, '0')}.mp4`) });
+for (let a = first, k = 0; a < last; a += CHUNK, k++) {
+  chunks.push({ k, a, b: Math.min(last, a + CHUNK), file: path.join(tmp, `seg${String(k).padStart(3, '0')}.mp4`) });
 }
 
-const encoders = chunks.map((c) => {
+const sinks = new Map();          // chunk index -> ffmpeg stdin
+let rendered = 0;
+const started = Date.now();
+const server = await startServer((k, index, buf) => new Promise((resolve, reject) => {
+  const sink = sinks.get(k);
+  if (!sink) return reject(new Error(`no encoder for chunk ${k}`));
+  if (buf.length !== W * H * 4) return reject(new Error(`bad frame size ${buf.length}`));
+  rendered++;
+  if (rendered % 120 === 0) {
+    const el = (Date.now() - started) / 1000;
+    console.log(`${rendered} frames  ${(rendered / el).toFixed(2)} fps`);
+  }
+  if (sink.write(buf)) resolve();       // respect encoder back-pressure
+  else sink.once('drain', resolve);
+}));
+
+async function renderChunk(c) {
+  const part = c.file + '.part.mp4';
   const ff = spawn('ffmpeg', [
     '-hide_banner', '-loglevel', 'error', '-y',
     '-f', 'rawvideo', '-pix_fmt', 'rgba', '-s', `${W}x${H}`, '-r', String(FPS), '-i', 'pipe:0',
@@ -52,49 +70,53 @@ const encoders = chunks.map((c) => {
     '-g', String(FPS * 2), '-keyint_min', String(FPS), '-bf', '2',
     '-x264-params', 'aq-mode=3:aq-strength=1.0:deblock=-1,-1:psy-rd=1.0,0.1:threads=2',
     '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv',
-    '-video_track_timescale', '15360', c.file,
+    '-video_track_timescale', '15360', part,
   ], { stdio: ['pipe', 'inherit', 'inherit'] });
-  const done = new Promise((resolve, reject) => {
-    ff.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`ffmpeg exited ${code} for worker ${c.k}`))));
-  });
-  return { ff, done };
-});
-
-let rendered = 0;
-const started = Date.now();
-const server = await startServer((worker, index, buf) => new Promise((resolve, reject) => {
-  if (buf.length !== W * H * 4) return reject(new Error(`bad frame size ${buf.length}`));
-  rendered++;
-  if (rendered % 120 === 0 || rendered === total) {
-    const el = (Date.now() - started) / 1000;
-    const eta = (el / rendered) * (total - rendered);
-    console.log(`${rendered}/${total} frames  ${(rendered / el).toFixed(1)} fps  eta ${Math.round(eta)}s`);
-  }
-  // Respect back-pressure from the encoder.
-  if (encoders[worker].ff.stdin.write(buf)) resolve();
-  else encoders[worker].ff.stdin.once('drain', resolve);
-}));
-
-// One browser per worker: pages in a single browser share its GPU process.
-await Promise.all(chunks.map(async (c, idx) => {
+  ff.stdin.on('error', () => {});
+  const done = new Promise((resolve) => ff.on('close', resolve));
+  sinks.set(c.k, ff.stdin);
   const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 1 });
-  page.on('pageerror', (e) => console.error(`[worker ${c.k}]`, e.message));
-  await page.goto(`http://127.0.0.1:${server.port}/film/index.html?w=${W}&h=${H}`);
-  await page.evaluate(() => window.filmReady);
-  await page.evaluate(async ({ a, b, fps, worker }) => {
-    for (let i = a; i < b; i++) {
-      const data = window.grabFrame(i / fps);
-      const res = await fetch(`/frame?w=${worker}&i=${i}`, { method: 'POST', body: data });
-      if (!res.ok) throw new Error('frame upload failed: ' + res.status);
+  try {
+    const page = await browser.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 1 });
+    await page.goto(`http://127.0.0.1:${server.port}/film/index.html?w=${W}&h=${H}`);
+    await page.evaluate(() => window.filmReady);
+    await page.evaluate(async ({ a, b, fps, k }) => {
+      for (let i = a; i < b; i++) {
+        const data = window.grabFrame(i / fps);
+        const res = await fetch(`/frame?w=${k}&i=${i}`, { method: 'POST', body: data });
+        if (!res.ok) throw new Error('frame upload failed: ' + res.status);
+      }
+    }, { a: c.a, b: c.b, fps: FPS, k: c.k });
+    ff.stdin.end();
+    const code = await done;
+    if (code !== 0) throw new Error(`ffmpeg exited ${code}`);
+    fs.renameSync(part, c.file);
+  } catch (err) {
+    ff.kill('SIGKILL');
+    throw err;
+  } finally {
+    sinks.delete(c.k);
+    await browser.close().catch(() => {});
+  }
+}
+
+const queue = chunks.filter((c) => !fs.existsSync(c.file));
+console.log(`${chunks.length} chunks, ${queue.length} to render`);
+await Promise.all(Array.from({ length: WORKERS }, async () => {
+  for (let c = queue.shift(); c; c = queue.shift()) {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await renderChunk(c);
+        console.log(`chunk ${c.k} done (${((Date.now() - started) / 1000).toFixed(0)}s)`);
+        break;
+      } catch (err) {
+        console.error(`chunk ${c.k} attempt ${attempt} failed: ${String(err && err.message).split('\n')[0]}`);
+        if (attempt >= 4) throw err;
+      }
     }
-  }, { a: c.a, b: c.b, fps: FPS, worker: idx });
-  await browser.close();
-  encoders[idx].ff.stdin.end();
+  }
 }));
-await Promise.all(encoders.map((e) => e.done));
 server.close();
-console.log(`frames done in ${((Date.now() - started) / 1000).toFixed(0)}s; joining…`);
 
 // Join the segments (stream copy) and add the score.
 const list = path.join(tmp, 'list.txt');
