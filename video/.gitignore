@@ -1,3 +1,4 @@
 node_modules/
 out/*
 !out/five-thousand-years-1080p60.mp4
+__pycache__/
